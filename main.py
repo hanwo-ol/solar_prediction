@@ -22,8 +22,8 @@ CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy",
     "MODEL_SAVE_PATH": "./best_multistep_model_4to4.pth",
     "SEED": 42,
-    "BATCH_SIZE": 8,
-    "EPOCHS": 20, # 에포크 수 증가
+    "BATCH_SIZE": 32,
+    "EPOCHS": 2, # 에포크 수 증가
     "LEARNING_RATE": 1e-4,
     "NUM_WORKERS": 4,
     "INPUT_LEN": 4,      # 입력 시퀀스 길이 (과거 4개 프레임, 2시간)
