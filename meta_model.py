@@ -34,6 +34,11 @@ class BayesianLayer(nn.Module):
         """
         posterior_sigma = F.softplus(self.rho)
         
+        # --- 안정화 장치: Epsilon 추가 ---
+        eps = 1e-8
+        prior_sigma = prior_sigma + eps
+        posterior_sigma = posterior_sigma + eps
+        
         kl = (torch.log(prior_sigma / posterior_sigma) +
               (posterior_sigma.pow(2) + (self.mu - prior_mu).pow(2)) / (2 * prior_sigma.pow(2)) - 0.5)
         

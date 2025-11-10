@@ -1,0 +1,83 @@
+(meta) user@user:~/solar_2nd/solar_prediction$ python meta_main.py
+Seed set to 42
+Using GPU: NVIDIA H200 NVL
+Found 7269 valid sequences.
+Found 3665 valid sequences.
+Validation task created with 5 support samples and 10 query samples.
+
+--- Starting Meta-Training ---
+Meta-Training: 100%|██████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:51<00:00,  5.16s/it]
+
+--- Starting Debugging in meta_evaluate ---
+  [Adaptation Step 1/10]
+    MSE Loss: 1.029690
+    KL Loss: 0.000000
+    Total Inner Loss: 1.029690
+    Gradient Norm: 5.055319
+  [Adaptation Step 2/10]
+    MSE Loss: 1.130434
+    KL Loss: 0.002283
+    Total Inner Loss: 1.130434
+    Gradient Norm: 5.099392
+  [Adaptation Step 3/10]
+    MSE Loss: 0.980780
+    KL Loss: 0.007774
+    Total Inner Loss: 0.980781
+    Gradient Norm: 5.220930
+  [Adaptation Step 4/10]
+    MSE Loss: 0.930560
+    KL Loss: 0.014526
+    Total Inner Loss: 0.930561
+    Gradient Norm: 5.849318
+  [Adaptation Step 5/10]
+    MSE Loss: 0.932238
+    KL Loss: 0.024133
+    Total Inner Loss: 0.932240
+    Gradient Norm: 5.170111
+  [Adaptation Step 6/10]
+    MSE Loss: 0.918829
+    KL Loss: 0.032627
+    Total Inner Loss: 0.918833
+    Gradient Norm: 5.029016
+  [Adaptation Step 7/10]
+    MSE Loss: 0.879884
+    KL Loss: 0.041158
+    Total Inner Loss: 0.879888
+    Gradient Norm: 3.957807
+  [Adaptation Step 8/10]
+    MSE Loss: 1.091257
+    KL Loss: 0.050044
+    Total Inner Loss: 1.091262
+    Gradient Norm: 8.168684
+  [Adaptation Step 9/10]
+    MSE Loss: 1.113468
+    KL Loss: 0.067842
+    Total Inner Loss: 1.113474
+    Gradient Norm: 6.564346
+  [Adaptation Step 10/10]
+    MSE Loss: 1.183916
+    KL Loss: 0.083431
+    Total Inner Loss: 1.183924
+    Gradient Norm: 6.573563
+
+Epoch 1/5 | Meta-Train Loss: 1.028797 | Val Loss: 41.899189
+Best model saved to ./best_bayesian_meta_model.pth with validation loss: 41.899189
+Meta-Training: 100%|██████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:51<00:00,  5.12s/it]
+
+Epoch 2/5 | Meta-Train Loss: 1.031360 | Val Loss: 15.113538
+Best model saved to ./best_bayesian_meta_model.pth with validation loss: 15.113538
+Meta-Training: 100%|██████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:51<00:00,  5.12s/it]
+
+Epoch 3/5 | Meta-Train Loss: 1.029989 | Val Loss: 64.278038
+Meta-Training: 100%|██████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:51<00:00,  5.13s/it]
+
+Epoch 4/5 | Meta-Train Loss: 1.010232 | Val Loss: 35.543507
+Meta-Training: 100%|██████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:51<00:00,  5.14s/it]
+
+Epoch 5/5 | Meta-Train Loss: 0.985163 | Val Loss: 56.495983
+
+--- Meta-Training Finished ---
+
+--- Final Evaluation on a New Test Task ---
+Loaded best model for final evaluation.
+Final Test Task Loss: 65.650314
