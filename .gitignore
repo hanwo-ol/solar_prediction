@@ -3,3 +3,6 @@ __pycache__/
 
 # PyTorch/ML model files
 *.pth
+
+# PyTorch/ML output files
+*.png
