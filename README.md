@@ -67,3 +67,14 @@ $$
 $$
 
 이 과정은 $\nabla_\theta$가 내부 루프의 경사 하강 과정 전체를 통과해야 하므로, 고차 미분(higher-order differentiation)이 필요합니다.
+
+
+---
+
+참조
+
+@inproceedings{ravi2019amortized,
+  title={Amortized bayesian meta-learning},
+  author={Ravi, Sachin and Beatson, Alex},
+  booktitle={International Conference on Learning Representations}
+}
