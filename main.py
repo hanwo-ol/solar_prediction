@@ -8,35 +8,32 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from torchvision import transforms
-from datetime import datetime, timedelta
+from datetime import datetime
+from torch.cuda.amp import GradScaler
 
 # 모듈 임포트
 from model import UNetMultiStep
-# --- [수정] _extract_time_from_path 함수 임포트 ---
 from dataset import SolarPredictionDataset, _extract_time_from_path
-# -------------------------------------------------
 from engine import train_one_epoch, evaluate
 from utils import set_seed, get_device
 
 # --- 1. 설정 (Configuration) ---
 CONFIG = {
-    "DATA_DIR": "/home/user/hanwool/new_npy", # 실제 데이터 경로
+    "DATA_DIR": "/home/user/hanwool/new_npy",
     "MODEL_SAVE_PATH": "./best_multistep_model_4to4.pth",
     "SEED": 42,
     "BATCH_SIZE": 8,
-    "EPOCHS": 10,
+    "EPOCHS": 20, # 에포크 수 증가
     "LEARNING_RATE": 1e-4,
     "NUM_WORKERS": 4,
     "INPUT_LEN": 4,      # 입력 시퀀스 길이 (과거 4개 프레임, 2시간)
     "TARGET_LEN": 4,     # 출력 시퀀스 길이 (미래 4개 프레임, 2시간)
-    "IMG_HEIGHT": 512,
-    "IMG_WIDTH": 512,
     "DATA_MIN": 0.0,     # 데이터 정규화를 위한 최소값
     "DATA_MAX": 26.41    # 데이터 정규화를 위한 최대값
 }
 
 def visualize_predictions(model, dataloader, device, num_samples=3):
-    """테스트 데이터셋으로 예측하고 결과를 시각화 (개선된 버전)"""
+    """테스트 데이터셋으로 예측하고 결과를 시각화합니다."""
     model.eval()
     print("\n--- Visualizing Predictions ---")
     with torch.no_grad():
@@ -47,41 +44,39 @@ def visualize_predictions(model, dataloader, device, num_samples=3):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             
-            # 정규화 해제 함수
+            # -1~1 범위를 원래 데이터 범위로 되돌리는 함수
             def denormalize(tensor):
-                return (tensor.cpu() * (CONFIG['DATA_MAX'] - CONFIG['DATA_MIN']) / 2.0) + \
-                       (CONFIG['DATA_MAX'] + CONFIG['DATA_MIN']) / 2.0
+                val_range = CONFIG['DATA_MAX'] - CONFIG['DATA_MIN']
+                return (tensor.cpu() * (val_range / 2.0)) + ((CONFIG['DATA_MAX'] + CONFIG['DATA_MIN']) / 2.0)
 
-            inputs_denorm = denormalize(inputs)
             targets_denorm = denormalize(targets)
             outputs_denorm = denormalize(outputs)
 
             # 시각화를 위해 첫 번째 배치 아이템만 사용
-            inp_last = inputs_denorm[0, -1, :, :] # 입력의 마지막 프레임 (t)
-            targs = targets_denorm[0]             # 타겟 시퀀스 (t+1, t+2, ...)
-            preds = outputs_denorm[0]             # 예측 시퀀스 (t+1, t+2, ...)
+            targs = targets_denorm[0]
+            preds = outputs_denorm[0]
 
             fig, axes = plt.subplots(3, CONFIG['TARGET_LEN'], figsize=(CONFIG['TARGET_LEN'] * 4, 10))
-            fig.suptitle(f'Sample {i+1}: Prediction vs. Ground Truth\n(Input at time t, predicting t+30m to t+120m)', fontsize=16)
+            fig.suptitle(f'Sample {i+1}: Prediction vs. Ground Truth\n(Predicting t+30m to t+120m)', fontsize=16)
 
             for j in range(CONFIG['TARGET_LEN']):
                 time_step = 30 * (j + 1)
                 
                 # 1행: Ground Truth
                 ax = axes[0, j]
-                im = ax.imshow(targs[j], cmap='gray', vmin=0, vmax=CONFIG['DATA_MAX'])
+                im = ax.imshow(targs[j], cmap='gray', vmin=CONFIG['DATA_MIN'], vmax=CONFIG['DATA_MAX'])
                 ax.set_title(f'Target (t+{time_step}m)')
                 ax.axis('off')
                 fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
                 # 2행: Prediction
                 ax = axes[1, j]
-                im = ax.imshow(preds[j], cmap='gray', vmin=0, vmax=CONFIG['DATA_MAX'])
+                im = ax.imshow(preds[j], cmap='gray', vmin=CONFIG['DATA_MIN'], vmax=CONFIG['DATA_MAX'])
                 ax.set_title(f'Prediction (t+{time_step}m)')
                 ax.axis('off')
                 fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-                # 3행: Difference
+                # 3행: Difference (오차)
                 ax = axes[2, j]
                 diff = torch.abs(targs[j] - preds[j])
                 im = ax.imshow(diff, cmap='hot', vmin=0, vmax=CONFIG['DATA_MAX']/2)
@@ -90,8 +85,8 @@ def visualize_predictions(model, dataloader, device, num_samples=3):
                 fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
             plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-            plt.savefig(f"prediction_sample_{i}.png")
-            print(f"Saved prediction visualization to prediction_sample_{i}.png")
+            plt.savefig(f"prediction_sample_{i+1}.png")
+            print(f"Saved prediction visualization to prediction_sample_{i+1}.png")
             plt.show()
 
 
@@ -103,17 +98,15 @@ def main():
     data_dir = Path(CONFIG['DATA_DIR'])
     all_files = sorted(list(data_dir.glob("*.npy")))
     if not all_files:
-        print(f"Error: No .npy files found in {data_dir}. Please check the path.")
-        return
+        raise FileNotFoundError(f"Error: No .npy files found in {data_dir}. Please check the path.")
         
-    # 연도 기반 데이터 분할
-    train_files = [p for p in all_files if _extract_time_from_path(p).year in [2021, 2022]]
-    val_files = [p for p in all_files if _extract_time_from_path(p).year == 2023]
+    # 연도 기반 데이터 분할 (2021, 2022 -> train, 2023 -> val/test)
+    train_files = [p for p in all_files if _extract_time_from_path(p) and _extract_time_from_path(p).year in [2021, 2022]]
+    val_test_files = [p for p in all_files if _extract_time_from_path(p) and _extract_time_from_path(p).year == 2023]
     
-    # Validation set을 8:2로 val/test 분할
-    val_split_index = int(len(val_files) * 0.8)
-    test_files = val_files[val_split_index:]
-    val_files = val_files[:val_split_index]
+    val_split_index = int(len(val_test_files) * 0.8)
+    val_files = val_test_files[:val_split_index]
+    test_files = val_test_files[val_split_index:]
 
     print(f"Total files: {len(all_files)}")
     print(f"Train files: {len(train_files)}, Val files: {len(val_files)}, Test files: {len(test_files)}")
@@ -131,7 +124,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=CONFIG['BATCH_SIZE'], shuffle=False, num_workers=CONFIG['NUM_WORKERS'], pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=CONFIG['BATCH_SIZE'], shuffle=False, num_workers=CONFIG['NUM_WORKERS'], pin_memory=True)
 
-    # --- 3. 모델, 손실 함수, 옵티마이저 정의 ---
+    # --- 3. 모델, 손실 함수, 옵티마이저, AMP 스케일러 정의 ---
     model = UNetMultiStep(
         n_channels=CONFIG['INPUT_LEN'], 
         num_future_steps=CONFIG['TARGET_LEN']
@@ -139,7 +132,8 @@ def main():
     
     criterion = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=CONFIG['LEARNING_RATE'])
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=2, factor=0.5, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=2, factor=0.5)
+    scaler = GradScaler() # AMP 스케일러 초기화
 
     # --- 4. 훈련 및 검증 루프 ---
     best_val_loss = float('inf')
@@ -147,13 +141,18 @@ def main():
     for epoch in range(CONFIG['EPOCHS']):
         print(f"\nEpoch {epoch+1}/{CONFIG['EPOCHS']}")
         
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler)
         val_loss = evaluate(model, val_loader, criterion, device)
         
         print(f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
         
+        old_lr = optimizer.param_groups[0]['lr']
         scheduler.step(val_loss)
+        new_lr = optimizer.param_groups[0]['lr']
         
+        if old_lr > new_lr:
+            print(f"Learning rate reduced from {old_lr:.6f} to {new_lr:.6f}")
+
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), CONFIG['MODEL_SAVE_PATH'])
@@ -163,14 +162,11 @@ def main():
 
     # --- 5. 테스트 및 시각화 ---
     print("\n--- Running Inference on Test Set ---")
-    # 가장 성능이 좋았던 모델 가중치 로드
     model.load_state_dict(torch.load(CONFIG['MODEL_SAVE_PATH']))
     
-    # 테스트셋으로 최종 평가
     test_loss = evaluate(model, test_loader, criterion, device)
     print(f"Final Test Loss: {test_loss:.6f}")
 
-    # 테스트셋 샘플 시각화
     visualize_predictions(model, test_loader, device, num_samples=3)
 
 if __name__ == '__main__':

@@ -69,6 +69,8 @@ class UNetMultiStep(nn.Module):
         self.num_future_steps = num_future_steps
         self.bilinear = bilinear
 
+        # --- 핵심 수정 사항 1: 입력 채널 ---
+        # 입력 채널 수를 과거 시퀀스 길이로 설정
         self.inc = DoubleConv(n_channels, 64)
         self.down1 = Down(64, 128)
         self.down2 = Down(128, 256)
@@ -80,11 +82,12 @@ class UNetMultiStep(nn.Module):
         self.up3 = Up(256, 128 // factor, bilinear)
         self.up4 = Up(128, 64, bilinear)
         
-        # --- 핵심 수정 사항 ---
+        # --- 핵심 수정 사항 2: 출력 채널 ---
         # 출력 채널을 예측할 미래 스텝의 수로 설정
         self.outc = OutConv(64, num_future_steps)
 
     def forward(self, x):
+        # x shape: (batch, n_channels, height, width)
         x1 = self.inc(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
@@ -95,4 +98,5 @@ class UNetMultiStep(nn.Module):
         x = self.up3(x, x2)
         x = self.up4(x, x1)
         logits = self.outc(x)
+        # logits shape: (batch, num_future_steps, height, width)
         return logits
