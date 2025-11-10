@@ -22,17 +22,17 @@ CONFIG = {
     "SEED": 42,
     
     # --- 메타-러닝 하이퍼파라미터 ---
-    "EPOCHS": 5,
-    "META_LR": 1e-5, # [조정] nan 발생 시 학습률을 낮추는 것이 좋음
-    "INNER_LR": 1e-3, # [조정] 내부 루프 학습률도 낮춰서 안정성 확보
-    "INNER_STEPS": 5,
-    "KL_WEIGHT": 1e-4, # [조정] KL 가중치를 낮춰 초반에 MSE에 집중
-    "GRAD_CLIP_NORM": 1.0, # [신규] 그래디언트 클리핑 임계값
+    "EPOCHS": 50,          # 안정적인 수렴을 위해 에포크 수를 늘립니다.
+    "META_LR": 1e-8,       # 외부 학습률을 낮게 유지하여 안정적으로 학습
+    "INNER_LR": 1e-7,      # [핵심 수정] 내부 학습률을 대폭 낮춥니다. (1e-2 -> 1e-4)
+    "INNER_STEPS": 5,      # 내부 스텝 수도 약간 줄여서 발산 위험 감소
+    "KL_WEIGHT": 1e-6,     # [핵심 수정] KL 가중치를 매우 낮춰 초반에는 MSE에 집중하도록 유도
+    "GRAD_CLIP_NORM": 10.0,
     
     # --- 태스크 구성 하이퍼파라미터 ---
-    "TASKS_PER_EPOCH": 10,
-    "K_SHOT": 5,
-    "K_QUERY": 10,
+    "TASKS_PER_EPOCH": 100, # 더 많은 태스크를 통해 일반화 성능 향상
+    "K_SHOT": 5,           # [조정] 메모리 및 안정성을 위해 줄임
+    "K_QUERY": 10,         # [조정] 메모리 및 안정성을 위해 줄임
     
     # --- 평가 하이퍼파라미터 ---
     "NUM_ADAPTATION_STEPS": 10,
@@ -144,10 +144,14 @@ def main():
             CONFIG['NUM_ADAPTATION_STEPS'], 
             CONFIG['NUM_EVAL_SAMPLES']
         )
-        print(f"Final Test Task Loss: {test_loss:.6f}")
-
-        if mean_pred is not None:
+        
+        # --- [핵심 수정] 반환 값 유효성 검사 ---
+        if not math.isnan(test_loss) and mean_pred is not None:
+            print(f"Final Test Task Loss: {test_loss:.6f}")
             visualize_meta_predictions(mean_pred, std_pred, ground_truth, sample_idx=0)
+        else:
+            print("Final evaluation failed: NaN was produced during adaptation.")
+            
     else:
         print("Could not find a saved model. Final evaluation skipped.")
 

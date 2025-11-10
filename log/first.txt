@@ -1,3 +1,35 @@
+# --- 1. 설정 (Configuration) ---
+CONFIG = {
+    # --- 경로 및 시드 ---
+    "DATA_DIR": "/home/user/hanwool/new_npy",
+    "MODEL_SAVE_PATH": "./best_bayesian_meta_model.pth",
+    "SEED": 42,
+    
+    # --- 메타-러닝 하이퍼파라미터 ---
+    "EPOCHS": 5,
+    "META_LR": 1e-5, # [조정] nan 발생 시 학습률을 낮추는 것이 좋음
+    "INNER_LR": 1e-3, # [조정] 내부 루프 학습률도 낮춰서 안정성 확보
+    "INNER_STEPS": 5,
+    "KL_WEIGHT": 1e-4, # [조정] KL 가중치를 낮춰 초반에 MSE에 집중
+    "GRAD_CLIP_NORM": 1.0, # [신규] 그래디언트 클리핑 임계값
+    
+    # --- 태스크 구성 하이퍼파라미터 ---
+    "TASKS_PER_EPOCH": 10,
+    "K_SHOT": 5,
+    "K_QUERY": 10,
+    
+    # --- 평가 하이퍼파라미터 ---
+    "NUM_ADAPTATION_STEPS": 10,
+    "NUM_EVAL_SAMPLES": 10,
+
+    # --- 데이터 및 모델 기본 설정 ---
+    "INPUT_LEN": 4,
+    "TARGET_LEN": 4,
+    "DATA_MIN": 0.0,
+    "DATA_MAX": 26.41
+}
+
+
 (meta) user@user:~/solar_2nd/solar_prediction$ python meta_main.py
 Seed set to 42
 Using GPU: NVIDIA H200 NVL
