@@ -1,3 +1,5 @@
+# Python bytecode cache
+__pycache__/
 
-./__pychache__
-./best_multistep_model_4to4.pth
+# PyTorch/ML model files
+*.pth
