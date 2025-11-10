@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from torchvision import transforms
+from datetime import datetime, timedelta
 
 # 모듈 임포트
 from model import UNetMultiStep
@@ -17,19 +19,20 @@ from utils import set_seed, get_device
 # --- 1. 설정 (Configuration) ---
 CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy", # 실제 데이터 경로
-    "MODEL_SAVE_PATH": "./best_multistep_model.pth",
+    "MODEL_SAVE_PATH": "./best_multistep_model_4to4.pth",
     "SEED": 42,
     "BATCH_SIZE": 8,
-    "EPOCHS": 10, # 실제 학습 시에는 더 길게 설정 (예: 50)
+    "EPOCHS": 10,
     "LEARNING_RATE": 1e-4,
     "NUM_WORKERS": 4,
-    "INPUT_LEN": 5,      # 과거 5개 프레임 입력
-    "TARGET_LEN": 4,     # 미래 4개 프레임(30, 60, 90, 120분) 예측
-    "IMG_HEIGHT": 512,   # 이미지 높이
-    "IMG_WIDTH": 512,    # 이미지 너비
-    # 데이터 정규화를 위한 값 (훈련 데이터셋에서 미리 계산해야 함)
+    # --- [수정] 4장을 보고 4장을 예측하도록 변경 ---
+    "INPUT_LEN": 4,
+    "TARGET_LEN": 4,
+    # -----------------------------------------
+    "IMG_HEIGHT": 512,
+    "IMG_WIDTH": 512,
     "DATA_MIN": 0.0,
-    "DATA_MAX": 26.4 # 수정 필요
+    "DATA_MAX": 26.41 
 }
 
 def create_dummy_data(base_dir, num_files=100):
@@ -61,21 +64,19 @@ def visualize_predictions(model, dataloader, device, num_samples=1):
             targets_denorm = (targets.cpu() * (CONFIG['DATA_MAX'] - CONFIG['DATA_MIN']) / 2.0) + (CONFIG['DATA_MAX'] + CONFIG['DATA_MIN']) / 2.0
             outputs_denorm = (outputs.cpu() * (CONFIG['DATA_MAX'] - CONFIG['DATA_MIN']) / 2.0) + (CONFIG['DATA_MAX'] + CONFIG['DATA_MIN']) / 2.0
 
-            # 시각화를 위해 배치 중 첫 번째 샘플 선택
-            inp_last = inputs_denorm[0, -1, :, :] # 입력의 마지막 프레임
-            targs = targets_denorm[0] # (4, H, W)
-            preds = outputs_denorm[0] # (4, H, W)
+            inp_last = inputs_denorm[0, -1, :, :]
+            targs = targets_denorm[0]
+            preds = outputs_denorm[0]
 
             fig, axes = plt.subplots(3, CONFIG['TARGET_LEN'], figsize=(15, 10))
             
             # 제목 설정
             axes[0, 0].set_title("Input (t)")
             for j in range(CONFIG['TARGET_LEN']):
-                axes[0, j+1 if j < CONFIG['TARGET_LEN']-1 else 0].set_title(f"Target (t+{30*(j+1)}m)")
+                axes[0, j].set_title(f"Target (t+{30*(j+1)}m)")
                 axes[1, j].set_title(f"Prediction (t+{30*(j+1)}m)")
                 axes[2, j].set_title(f"Difference (t+{30*(j+1)}m)")
 
-            # 이미지 표시
             im_in = axes[0, 0].imshow(inp_last, cmap='gray')
             fig.colorbar(im_in, ax=axes[0,0])
 
@@ -104,25 +105,19 @@ def main():
 
     # --- 2. 데이터 준비 ---
     data_dir = Path(CONFIG['DATA_DIR'])
-    # # 만약 더미 데이터가 필요하다면 아래 주석을 해제하세요.
-    # if not any(data_dir.iterdir()):
-    #      create_dummy_data(data_dir)
-
-    all_files = list(data_dir.glob("*.npy"))
+    all_files = sorted(list(data_dir.glob("*.npy")))
     if not all_files:
         print(f"Error: No .npy files found in {data_dir}. Please check the path.")
         return
         
-    # 데이터 분할 (예: 80% train, 10% val, 10% test)
-    train_size = int(0.8 * len(all_files))
-    val_size = int(0.1 * len(all_files))
-    train_files = all_files[:train_size]
-    val_files = all_files[train_size : train_size + val_size]
-    test_files = all_files[train_size + val_size :]
+    # --- [수정] 연도 기반 데이터 분할 ---
+    train_files = [p for p in all_files if _extract_time_from_path(p).year in [2021, 2022]]
+    val_files = [p for p in all_files if _extract_time_from_path(p).year == 2023 and _extract_time_from_path(p).month <= 6]
+    test_files = [p for p in all_files if _extract_time_from_path(p).year == 2023 and _extract_time_from_path(p).month > 6]
+    # ------------------------------------
 
     print(f"Train files: {len(train_files)}, Val files: {len(val_files)}, Test files: {len(test_files)}")
 
-    # 정규화 변환 정의
     transform = transforms.Lambda(
         lambda x: (x - (CONFIG['DATA_MAX'] + CONFIG['DATA_MIN']) / 2.0) / ((CONFIG['DATA_MAX'] - CONFIG['DATA_MIN']) / 2.0)
     )
