@@ -1,5 +1,5 @@
 # loss_mc_dynamics.py
-# MC 이분산 NLL + dynamics(속도/가속) 합성 데이터 항
+# 옵션 B(MC) 이분산 NLL + dynamics(속도/가속) 합성 데이터 항
 import torch
 import torch.nn.functional as F
 
@@ -13,103 +13,114 @@ def _ensure_timeweights(cfg, T: int):
         return torch.ones(T, dtype=torch.float32)
     tw = torch.as_tensor(tw, dtype=torch.float32)
     if tw.numel() != T:
-        # 길이가 다르면 균일 가중으로 대체
+        # 길이가 다르면 균일 가중
         return torch.ones(T, dtype=torch.float32)
     return tw
 
 def _mc_mean_std(fmodel, x, S: int):
     """
-    fmodel(x, sample=True)를 S번 호출해 [S,B,C,H,W]를 만들고
-    평균/표준편차 반환. num_samples 인자는 사용하지 않음.
+    항상 수동 MC: fmodel(x, sample=True)를 S번 호출.
+    모델이 num_samples 인자를 받지 않아도 호환.
+    비정상값은 즉시 nan_to_num으로 치환.
     """
     preds = []
     for _ in range(S):
-        preds.append(fmodel(x, sample=True))  # BayesianUNet.forward(x, sample)
-    preds = torch.stack(preds, dim=0)  # [S,B,C,H,W]
-    return preds.mean(dim=0), preds.std(dim=0)
+        out = fmodel(x, sample=True)                 # [B,C,H,W]
+        out = torch.nan_to_num(out, nan=0.0, posinf=1e3, neginf=-1e3)
+        preds.append(out)
+    preds = torch.stack(preds, dim=0)               # [S,B,C,H,W]
+    mean_pred = preds.mean(dim=0)
+    std_pred  = preds.std(dim=0)
+    mean_pred = torch.nan_to_num(mean_pred, nan=0.0, posinf=1e3, neginf=-1e3)
+    std_pred  = torch.nan_to_num(std_pred,  nan=0.0, posinf=1e3, neginf=0.0)
+    return mean_pred, std_pred
+
+def _mc_mu_var(fmodel, x, S: int, tau2: float):
+    """
+    MC 평균/표준편차 -> 분산 = std^2 + tau2.
+    분산은 detach로 grad 차단(안정/메모리 절감).
+    상/하한 및 nan/inf 치환으로 수치 안전화.
+    """
+    mean_pred, std_pred = _mc_mean_std(fmodel, x, S)
+    var = (std_pred**2) + tau2
+    var = torch.nan_to_num(var, nan=1e-6, posinf=1e2, neginf=1e-6)
+    var = torch.clamp(var, min=1e-6, max=1e2)
+    return mean_pred, var
 
 def _heteroscedastic_nll_from_mu_var(mu, var, y, time_weights=None, eps=1e-12):
     """
-    mu,var,y: [B,C,H,W], time_weights: [C] or None
-    NLL = mean_{b,c,h,w} [ (y-mu)^2/var + log var ]
-    시간 가중이 있으면 channel(C) 축에 곱해 적용
+    mu,var,y: [B,C,H,W], C=T
+    NLL = 시간가중 평균_{c} 평균_{b,h,w} [ (y-mu)^2/var + log var ]
     """
-    # 안정화
-    var = torch.clamp(var, min=eps)
-    nll_per = ( (y - mu)**2 / var ) + torch.log(var)  # [B,C,H,W]
+    mu  = torch.nan_to_num(mu, nan=0.0, posinf=1e3, neginf=-1e3)
+    y   = torch.nan_to_num(y,  nan=0.0, posinf=1e3, neginf=-1e3)
+    var = torch.nan_to_num(var, nan=1e-6, posinf=1e2, neginf=1e-6)
+    var = torch.clamp(var, min=max(eps, 1e-6), max=1e2)
+
+    nll_per = ((y - mu)**2 / var) + torch.log(var)      # [B,C,H,W]
+    per_c = nll_per.mean(dim=(0, 2, 3))                 # [C]
 
     if time_weights is not None:
-        # time_weights: [C] → [1,C,1,1]
-        tw = time_weights.view(1, -1, 1, 1).to(nll_per.device, nll_per.dtype)
-        nll_per = nll_per * tw
-        denom = nll_per.new_tensor(tw.sum().item())
+        tw = time_weights.to(per_c.device, per_c.dtype) # [C]
+        nll = (per_c * tw).sum() / (tw.sum() + 1e-12)
     else:
-        denom = nll_per.new_tensor(nll_per.shape[1])  # C
-
-    # [B,C,H,W] → 평균
-    nll = nll_per.mean(dim=(0,2,3)).sum() / denom  # 채널가중 정규화
+        nll = per_c.mean()
     return nll
 
 def _velocity_loss(mu, y, reduction="mean"):
     """
     속도(1계 차분) L1 정합
-    mu,y: [B,C,H,W], C=T
     """
+    mu = torch.nan_to_num(mu, nan=0.0, posinf=1e3, neginf=-1e3)
+    y  = torch.nan_to_num(y,  nan=0.0, posinf=1e3, neginf=-1e3)
     if mu.shape[1] < 2:
         return mu.new_tensor(0.0)
-    dmu = mu[:,1:] - mu[:,:-1]        # [B,T-1,H,W]
-    dy  =  y[:,1:] -  y[:,:-1]
+    dmu = mu[:, 1:] - mu[:, :-1]        # [B,T-1,H,W]
+    dy  =  y[:, 1:] -  y[:, :-1]
     l = (dmu - dy).abs()
-    return l.mean() if reduction=="mean" else l.sum()
+    return l.mean() if reduction == "mean" else l.sum()
 
 def _accel_loss(mu, y, reduction="mean"):
     """
-    가속도(2계 차분) L1 정합
+    가속도(2계 차분) L1 정합: x_t - 2*x_{t-1} + x_{t-2}
     """
+    mu = torch.nan_to_num(mu, nan=0.0, posinf=1e3, neginf=-1e3)
+    y  = torch.nan_to_num(y,  nan=0.0, posinf=1e3, neginf=-1e3)
     if mu.shape[1] < 3:
         return mu.new_tensor(0.0)
-    d2mu = mu[:, 2:] - 2 * mu[:, 1:-1] + mu[:, :-2]   # [B, T-2, H, W]
+    d2mu = mu[:, 2:] - 2 * mu[:, 1:-1] + mu[:, :-2]   # [B,T-2,H,W]
     d2y  =  y[:, 2:] - 2 * y[:, 1:-1] + y[:, :-2]
     l = (d2mu - d2y).abs()
-    return l.mean() if reduction=="mean" else l.sum()
-
-def _mc_mu_var(fmodel, x, S: int, tau2: float):
-    """
-    MC로 예측 평균/분산 추정 → var = std^2 + tau2
-    반환: (mu, var)  [B,C,H,W]
-    """
-    mean_pred, std_pred = _mc_mean_std(fmodel, x, S)
-    var = std_pred**2 + tau2
-    return mean_pred, var
+    return l.mean() if reduction == "mean" else l.sum()
 
 def data_term_mc_dynamics(fmodel, x, y, config):
     """
     옵션 B(MC) 이분산 NLL + dynamics(vel/acc)의 합성 데이터 항
     fmodel : (적응 중인) 베이지안 모델
-    x, y   : [B, Cin, H, W], [B, Cout(=T), H, W]
+    x, y   : [B, Cin, H, W], [B, C=T, H, W]
     config : dict (없으면 기본값 사용)
-    반환   : data_loss (scalar), (mu, var) 튜플
+    반환   : data_loss (scalar), (mu, var)
     """
-    S = int(_get(config, "MC_INNER_SAMPLES", 4))  # 기본: inner 기준
-    tau2 = float(_get(config, "NLL_TAU2", 1e-4))
+    S     = int(_get(config, "MC_INNER_SAMPLES", 4))  # inner 기본
+    tau2  = float(_get(config, "NLL_TAU2", 1e-4))
     w_vel = float(_get(config, "W_VEL", 0.20))
     w_acc = float(_get(config, "W_ACC", 0.05))
 
-    # 시간 가중
     T = y.shape[1]
     time_weights = _ensure_timeweights(config, T).to(y.device, y.dtype)
 
-    # MC로 mu,var 추정
     mu, var = _mc_mu_var(fmodel, x, S, tau2)
 
-    # NLL
-    nll = _heteroscedastic_nll_from_mu_var(mu, var, y, time_weights=time_weights)
+    nll  = _heteroscedastic_nll_from_mu_var(mu, var, y, time_weights=time_weights)
+    with torch.no_grad():
+        resid = (y - mu)
+        print(f"[dbg] mean|resid|: {resid.abs().mean().item():.4f}, "
+            f"mean var: {var.mean().item():.6f}, "
+            f"log var mean: {torch.log(var).mean().item():.4f}")
+    lvel = _velocity_loss(mu, y, reduction="mean")
+    lacc = _accel_loss(mu, y, reduction="mean")
 
-    # dynamics 보강
-    l_vel = _velocity_loss(mu, y, reduction="mean")
-    l_acc = _accel_loss(mu, y, reduction="mean")
-
-    data_loss = nll + (w_vel * l_vel) + (w_acc * l_acc)
+    data_loss = nll + (w_vel * lvel) + (w_acc * lacc)
     return data_loss, (mu, var)
 
 # -----------------------------
@@ -118,34 +129,26 @@ def data_term_mc_dynamics(fmodel, x, y, config):
 
 def inner_total_loss_mc_dynamics(meta_learner, fmodel, support_x, support_y):
     """
-    inner loop 목적:
-      data_term(옵션B NLL + vel/acc) + beta * KL
-    KL 가중치는 meta_learner.config['KL_WEIGHT'] 사용
+    inner loop: data_term + beta * KL
     """
-    # 데이터 항
     data_loss, _ = data_term_mc_dynamics(
         fmodel=fmodel,
         x=support_x,
         y=support_y,
         config=meta_learner.config
     )
-
-    # KL(q||p)
     kl = fmodel.kl_divergence(meta_learner.prior_net)
+    kl = torch.nan_to_num(kl, nan=0.0, posinf=1e6, neginf=1e6)  # KL 가드
     beta = float(_get(meta_learner.config, "KL_WEIGHT", 0.0))
-    total = data_loss + beta * kl
-    return total
+    return data_loss + beta * kl
 
 def outer_data_loss_mc_dynamics(meta_learner, fmodel, query_x, query_y):
     """
-    outer loop 목적:
-      data_term(옵션B NLL + vel/acc)  (KL 없음)
-    외부 루프에서는 일반화 성능만 측정
+    outer loop: data_term (KL 없음)
     """
-    # 외부 루프에서는 샘플 수를 별도로 둘 수 있게 (없으면 inner와 동일)
     cfg = dict(meta_learner.config)
-    cfg["MC_INNER_SAMPLES"] = int(_get(meta_learner.config, "MC_OUTER_SAMPLES", _get(meta_learner.config, "MC_INNER_SAMPLES", 4)))
-
+    cfg["MC_INNER_SAMPLES"] = int(_get(meta_learner.config, "MC_OUTER_SAMPLES",
+                                _get(meta_learner.config, "MC_INNER_SAMPLES", 4)))
     data_loss, _ = data_term_mc_dynamics(
         fmodel=fmodel,
         x=query_x,

@@ -13,27 +13,24 @@ from meta_model import MetaLearner
 from meta_dataset import SolarPredictionDataset, MetaSolarPredictionDataset, _extract_time_from_path
 from meta_engine import meta_train_one_epoch, meta_evaluate
 from utils import set_seed, get_device
-from loss_mc_dynamics import (
-    inner_total_loss_mc_dynamics,
-    outer_data_loss_mc_dynamics,
-)
+
 # --- 1. 설정 (Configuration) ---
 CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy",
     "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split.pth",
     "SEED": 42,
     "EPOCHS": 50,
-    "META_LR": 1e-7,
-    "INNER_LR": 1e-6,
+    "META_LR": 1e-5,
+    "INNER_LR": 1e-4,
     "INNER_STEPS": 5,
     "KL_WEIGHT_INIT": 1e-8,
     "KL_WEIGHT_MAX": 1e-6,
     "GRAD_CLIP_NORM": 5.0,
-    "TASKS_PER_EPOCH": 20,
-    "K_SHOT": 4,
-    "K_QUERY": 8,
-    "NUM_ADAPTATION_STEPS": 10,
-    "NUM_EVAL_SAMPLES": 20,
+    "TASKS_PER_EPOCH": 10,
+    "K_SHOT": 3,
+    "K_QUERY": 6,
+    "NUM_ADAPTATION_STEPS": 5,
+    "NUM_EVAL_SAMPLES": 3,
     "INPUT_LEN": 4,
     "TARGET_LEN": 4,
     "DATA_MIN": 0.0,
@@ -41,11 +38,11 @@ CONFIG = {
 }
 
 CONFIG.update({
-    "MC_INNER_SAMPLES": 4,      # inner loop에서의 샘플 수
-    "MC_OUTER_SAMPLES": 8,      # outer/val/test에서의 샘플 수
-    "NLL_TAU2": 1e-4,           # 관측 노이즈 하한 (정규화 스케일)
-    "W_VEL": 0.20,              # 속도 항 가중치
-    "W_ACC": 0.05,              # 가속도 항 가중치
+    "MC_INNER_SAMPLES": 2,      # inner loop에서의 샘플 수
+    "MC_OUTER_SAMPLES": 4,      # outer/val/test에서의 샘플 수
+    "NLL_TAU2": 1e-3,            # 관측 노이즈 하한 (정규화 스케일)
+    "W_VEL": 0.10,              # 속도 항 가중치
+    "W_ACC": 0.02,              # 가속도 항 가중치
     "TIME_WEIGHTS": [1.0, 0.9, 0.8, 0.7],  # 가까운 미래 가중 ↑ (길이=T)
 })
 

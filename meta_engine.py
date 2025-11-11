@@ -109,6 +109,8 @@ def meta_evaluate(meta_learner, test_task, device, num_adaptation_steps, num_eva
         predictions = []
         for _ in range(num_eval_samples):
             pred = fmodel.prior_net(query_x, sample=True)
+            pred = torch.nan_to_num(pred, nan=0.0, posinf=1e3, neginf=-1e3)
+
             predictions.append(pred.cpu())
         
         predictions_tensor = torch.stack(predictions)
