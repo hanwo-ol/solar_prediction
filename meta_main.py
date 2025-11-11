@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torchvision import transforms
 import math # isnan 확인을 위해 추가
+import matplotlib.pyplot as plt
 
 # 모듈 임포트
 from meta_model import MetaLearner
@@ -47,8 +48,56 @@ CONFIG = {
 
 # visualize_meta_predictions 함수는 이전과 동일하게 유지
 def visualize_meta_predictions(mean_pred, std_pred, ground_truth, sample_idx=0):
-    # ... (이전 답변의 시각화 코드) ...
-    pass # 간결성을 위해 생략
+    """
+    [수정됨] 메타-러닝 평가 결과를 시각화하는 완전한 함수.
+    평균 예측, 불확실성(표준편차), 실제 값을 비교합니다.
+    """
+    print("\n--- Visualizing Final Test Task Prediction ---")
+    
+    # -1~1 범위를 원래 데이터 범위로 되돌리는 함수
+    def denormalize(tensor):
+        val_range = CONFIG['DATA_MAX'] - CONFIG['DATA_MIN']
+        return (tensor.cpu().numpy() * (val_range / 2.0)) + ((CONFIG['DATA_MAX'] + CONFIG['DATA_MIN']) / 2.0)
+
+    # 텐서에서 시각화할 샘플 선택 (배치의 첫 번째 아이템)
+    gt_sequence = denormalize(ground_truth[sample_idx])
+    mean_sequence = denormalize(mean_pred[sample_idx])
+    std_sequence = std_pred[sample_idx].cpu().numpy() # 표준편차는 정규화 해제 불필요
+
+    num_steps = CONFIG['TARGET_LEN']
+    fig, axes = plt.subplots(3, num_steps, figsize=(num_steps * 4, 10))
+    fig.suptitle(f'Test Task Adaptation Result (Sample {sample_idx+1})\nPrediction, Uncertainty, and Ground Truth', fontsize=16)
+
+    for j in range(num_steps):
+        time_step = 30 * (j + 1)
+        
+        # 1행: Ground Truth
+        ax = axes[0, j]
+        im = ax.imshow(gt_sequence[j], cmap='gray', vmin=CONFIG['DATA_MIN'], vmax=CONFIG['DATA_MAX'])
+        ax.set_title(f'Target (t+{time_step}m)')
+        ax.axis('off')
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        # 2행: Mean Prediction
+        ax = axes[1, j]
+        im = ax.imshow(mean_sequence[j], cmap='gray', vmin=CONFIG['DATA_MIN'], vmax=CONFIG['DATA_MAX'])
+        ax.set_title(f'Mean Prediction (t+{time_step}m)')
+        ax.axis('off')
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+        # 3행: Uncertainty (Standard Deviation)
+        ax = axes[2, j]
+        # 불확실성은 다른 컬러맵을 사용하여 명확히 구분
+        im = ax.imshow(std_sequence[j], cmap='viridis') 
+        ax.set_title(f'Uncertainty (Std Dev)')
+        ax.axis('off')
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.93])
+    save_path = f"meta_prediction_sample_{sample_idx+1}.png"
+    plt.savefig(save_path)
+    print(f"Saved meta-prediction visualization to {save_path}")
+    plt.show()
 
 def main():
     set_seed(CONFIG['SEED'])
