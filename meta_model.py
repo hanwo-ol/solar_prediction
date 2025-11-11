@@ -303,82 +303,82 @@ class MetaLearner(nn.Module):
 #        outer_loss = F.mse_loss(outputs, query_y)
 #        return outer_loss
 
-def inner_loop_loss(self, fmodel, support_x, support_y):
-    """
-    Inner loop 목적 함수:
-      - 옵션 B(MC) 기반 이분산 Gaussian NLL
-      - Dynamics 보강(속도/가속) 텀
-      - + beta * KL(q||p)  (베이지안 정규화)
+    def inner_loop_loss(self, fmodel, support_x, support_y):
+        """
+        Inner loop 목적 함수:
+        - 옵션 B(MC) 기반 이분산 Gaussian NLL
+        - Dynamics 보강(속도/가속) 텀
+        - + beta * KL(q||p)  (베이지안 정규화)
 
-    Args:
-        fmodel    : higher로 복제된(적응 중인) 베이지안 U-Net
-        support_x : [B, Cin(=4), H, W]
-        support_y : [B, Cout(=T=4), H, W]
-    Returns:
-        total_loss: scalar (Tensor)
-    """
-    import torch
-    from loss_mc_dynamics import data_term_mc_dynamics
+        Args:
+            fmodel    : higher로 복제된(적응 중인) 베이지안 U-Net
+            support_x : [B, Cin(=4), H, W]
+            support_y : [B, Cout(=T=4), H, W]
+        Returns:
+            total_loss: scalar (Tensor)
+        """
+        import torch
+        from loss_mc_dynamics import data_term_mc_dynamics
 
-    # 데이터 항: MC NLL + (vel/acc)
-    data_loss, _ = data_term_mc_dynamics(
-        fmodel=fmodel,
-        x=support_x,
-        y=support_y,
-        config=self.config,
-    )
-
-    # KL(q||p): fmodel (posterior) vs self.prior_net (prior)
-    kl = fmodel.kl_divergence(self.prior_net)
-
-    # KL 가중치(anneal은 외부에서 self.config['KL_WEIGHT']로 업데이트된다고 가정)
-    beta = float(self.config.get("KL_WEIGHT", 0.0))
-
-    total_loss = data_loss + beta * kl
-
-    # 수치 안전장치 (디버깅 편의)
-    if torch.isnan(total_loss):
-        raise RuntimeError(
-            f"[inner_loop_loss] NaN detected: "
-            f"data_loss={float(data_loss.detach().cpu())}, "
-            f"kl={float(kl.detach().cpu())}, beta={beta}"
+        # 데이터 항: MC NLL + (vel/acc)
+        data_loss, _ = data_term_mc_dynamics(
+            fmodel=fmodel,
+            x=support_x,
+            y=support_y,
+            config=self.config,
         )
-    return total_loss
+
+        # KL(q||p): fmodel (posterior) vs self.prior_net (prior)
+        kl = fmodel.kl_divergence(self.prior_net)
+
+        # KL 가중치(anneal은 외부에서 self.config['KL_WEIGHT']로 업데이트된다고 가정)
+        beta = float(self.config.get("KL_WEIGHT", 0.0))
+
+        total_loss = data_loss + beta * kl
+
+        # 수치 안전장치 (디버깅 편의)
+        if torch.isnan(total_loss):
+            raise RuntimeError(
+                f"[inner_loop_loss] NaN detected: "
+                f"data_loss={float(data_loss.detach().cpu())}, "
+                f"kl={float(kl.detach().cpu())}, beta={beta}"
+            )
+        return total_loss
 
 
-def outer_loop_loss(self, fmodel, query_x, query_y):
-    """
-    Outer loop 목적 함수:
-      - 옵션 B(MC) 기반 이분산 Gaussian NLL
-      - Dynamics 보강(속도/가속) 텀
-      - KL 없음 (일반화 성능 평가/메타 업데이트의 표적)
+    def outer_loop_loss(self, fmodel, query_x, query_y):
+        """
+        Outer loop 목적 함수:
+        - 옵션 B(MC) 기반 이분산 Gaussian NLL
+        - Dynamics 보강(속도/가속) 텀
+        - KL 없음 (일반화 성능 평가/메타 업데이트의 표적)
 
-    Args:
-        fmodel   : inner 적응을 거친(고정된) 베이지안 U-Net
-        query_x  : [B, Cin(=4), H, W]
-        query_y  : [B, Cout(=T=4), H, W]
-    Returns:
-        data_loss: scalar (Tensor)
-    """
-    import torch
-    from loss_mc_dynamics import data_term_mc_dynamics
+        Args:
+            fmodel   : inner 적응을 거친(고정된) 베이지안 U-Net
+            query_x  : [B, Cin(=4), H, W]
+            query_y  : [B, Cout(=T=4), H, W]
+        Returns:
+            data_loss: scalar (Tensor)
+        """
+        import torch
+        from loss_mc_dynamics import data_term_mc_dynamics
 
-    # 외부 루프에서는 샘플 수를 별도 키로 조정 가능
-    # (없으면 inner와 동일한 샘플 수 사용)
-    cfg = dict(self.config)
-    if "MC_OUTER_SAMPLES" in cfg:
-        cfg["MC_INNER_SAMPLES"] = int(cfg["MC_OUTER_SAMPLES"])
+        # 외부 루프에서는 샘플 수를 별도 키로 조정 가능
+        # (없으면 inner와 동일한 샘플 수 사용)
+        cfg = dict(self.config)
+        if "MC_OUTER_SAMPLES" in cfg:
+            cfg["MC_INNER_SAMPLES"] = int(cfg["MC_OUTER_SAMPLES"])
 
-    data_loss, _ = data_term_mc_dynamics(
-        fmodel=fmodel,
-        x=query_x,
-        y=query_y,
-        config=cfg,
-    )
-
-    if torch.isnan(data_loss):
-        raise RuntimeError(
-            f"[outer_loop_loss] NaN detected: "
-            f"data_loss={float(data_loss.detach().cpu())}"
+        data_loss, _ = data_term_mc_dynamics(
+            fmodel=fmodel,
+            x=query_x,
+            y=query_y,
+            config=cfg,
         )
-    return data_loss
+
+        if torch.isnan(data_loss):
+            raise RuntimeError(
+                f"[outer_loop_loss] NaN detected: "
+                f"data_loss={float(data_loss.detach().cpu())}"
+            )
+        return data_loss

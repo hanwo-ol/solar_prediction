@@ -19,20 +19,14 @@ def _ensure_timeweights(cfg, T: int):
 
 def _mc_mean_std(fmodel, x, S: int):
     """
-    fmodel.forward가 (num_samples>1)에서 (mean, std)를 리턴하도록 이미 구현되어 있으므로
-    우선 그 경로를 활용. 혹시 모형이 달라도 호환되도록 폴백 루틴 포함.
-    반환: (mean: [B,C,H,W], std: [B,C,H,W])
+    fmodel(x, sample=True)를 S번 호출해 [S,B,C,H,W]를 만들고
+    평균/표준편차 반환. num_samples 인자는 사용하지 않음.
     """
-    try:
-        mean_pred, std_pred = fmodel(x, sample=True, num_samples=S)
-        return mean_pred, std_pred
-    except TypeError:
-        # 폴백: 수동 샘플
-        preds = []
-        for _ in range(S):
-            preds.append(fmodel(x, sample=True))
-        preds = torch.stack(preds, dim=0)  # [S,B,C,H,W]
-        return preds.mean(dim=0), preds.std(dim=0)
+    preds = []
+    for _ in range(S):
+        preds.append(fmodel(x, sample=True))  # BayesianUNet.forward(x, sample)
+    preds = torch.stack(preds, dim=0)  # [S,B,C,H,W]
+    return preds.mean(dim=0), preds.std(dim=0)
 
 def _heteroscedastic_nll_from_mu_var(mu, var, y, time_weights=None, eps=1e-12):
     """
@@ -74,8 +68,8 @@ def _accel_loss(mu, y, reduction="mean"):
     """
     if mu.shape[1] < 3:
         return mu.new_tensor(0.0)
-    d2mu = mu[:,2:] - 2*mu[:,1:-1] + mu[:,:-1]   # [B,T-2,H,W]
-    d2y  =  y[:,2:] - 2*y[:,1:-1] + y[:,:-1]
+    d2mu = mu[:, 2:] - 2 * mu[:, 1:-1] + mu[:, :-2]   # [B, T-2, H, W]
+    d2y  =  y[:, 2:] - 2 * y[:, 1:-1] + y[:, :-2]
     l = (d2mu - d2y).abs()
     return l.mean() if reduction=="mean" else l.sum()
 
