@@ -13,7 +13,10 @@ from meta_model import MetaLearner
 from meta_dataset import SolarPredictionDataset, MetaSolarPredictionDataset, _extract_time_from_path
 from meta_engine import meta_train_one_epoch, meta_evaluate
 from utils import set_seed, get_device
-
+from loss_mc_dynamics import (
+    inner_total_loss_mc_dynamics,
+    outer_data_loss_mc_dynamics,
+)
 # --- 1. 설정 (Configuration) ---
 CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy",
@@ -36,6 +39,15 @@ CONFIG = {
     "DATA_MIN": 0.0,
     "DATA_MAX": 26.41
 }
+
+CONFIG.update({
+    "MC_INNER_SAMPLES": 4,      # inner loop에서의 샘플 수
+    "MC_OUTER_SAMPLES": 8,      # outer/val/test에서의 샘플 수
+    "NLL_TAU2": 1e-4,           # 관측 노이즈 하한 (정규화 스케일)
+    "W_VEL": 0.20,              # 속도 항 가중치
+    "W_ACC": 0.05,              # 가속도 항 가중치
+    "TIME_WEIGHTS": [1.0, 0.9, 0.8, 0.7],  # 가까운 미래 가중 ↑ (길이=T)
+})
 
 def visualize_meta_predictions(mean_pred, std_pred, ground_truth, sample_idx=0):
     """메타-러닝 평가 결과를 시각화하는 함수."""
