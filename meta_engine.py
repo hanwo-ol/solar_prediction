@@ -106,7 +106,6 @@ def meta_evaluate(meta_learner, test_task, device, num_adaptation_steps, num_eva
     # 평가 시에는 eval 모드로 전환
     fmodel.eval()
     with torch.no_grad():
-        # ... (이하 평가 로직은 동일) ...
         predictions = []
         for _ in range(num_eval_samples):
             pred = fmodel.prior_net(query_x, sample=True)

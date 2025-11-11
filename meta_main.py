@@ -19,7 +19,7 @@ CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy",
     "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split.pth",
     "SEED": 42,
-    "EPOCHS": 5,
+    "EPOCHS": 50,
     "META_LR": 1e-7,
     "INNER_LR": 1e-6,
     "INNER_STEPS": 5,
