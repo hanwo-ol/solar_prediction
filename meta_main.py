@@ -15,19 +15,18 @@ from meta_engine import meta_train_one_epoch, meta_evaluate
 from utils import set_seed, get_device
 
 # --- 1. 설정 (Configuration) ---
-# 이전 답변에서 제안한 안정화된 하이퍼파라미터 사용
 CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy",
     "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split.pth",
     "SEED": 42,
-    "EPOCHS": 50,
+    "EPOCHS": 5,
     "META_LR": 1e-7,
     "INNER_LR": 1e-6,
     "INNER_STEPS": 5,
     "KL_WEIGHT_INIT": 1e-8,
     "KL_WEIGHT_MAX": 1e-6,
     "GRAD_CLIP_NORM": 5.0,
-    "TASKS_PER_EPOCH": 100,
+    "TASKS_PER_EPOCH": 20,
     "K_SHOT": 5,
     "K_QUERY": 10,
     "NUM_ADAPTATION_STEPS": 10,
