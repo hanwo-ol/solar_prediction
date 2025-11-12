@@ -57,7 +57,7 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
         query_x   = query_x.to(device, non_blocking=True)
         query_y   = query_y.to(device, non_blocking=True)
 
-        # 🔧 [1, K, C, H, W] -> [K, C, H, W] 평탄화
+        # [1, K, C, H, W] -> [K, C, H, W] 평탄화
         support_x = _flatten_task_batch(support_x, is_target=False).contiguous()
         support_y = _flatten_task_batch(support_y, is_target=True).contiguous()
         query_x   = _flatten_task_batch(query_x,   is_target=False).contiguous()

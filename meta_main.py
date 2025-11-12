@@ -17,9 +17,9 @@ from utils import set_seed, get_device
 # --- 1. 설정 (Configuration) ---
 CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy",
-    "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split_grad.pth",
+    "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split_grad_vel50_acc_25_eps10.pth",
     "SEED": 42,
-    "EPOCHS": 50,
+    "EPOCHS": 10,
     "META_LR": 1e-5,
     "INNER_LR": 1e-4,
     "INNER_STEPS": 5,
@@ -41,8 +41,8 @@ CONFIG.update({
     "MC_INNER_SAMPLES": 2,      # inner loop에서의 샘플 수
     "MC_OUTER_SAMPLES": 4,      # outer/val/test에서의 샘플 수
     "NLL_TAU2": 1e-3,            # 관측 노이즈 하한 (정규화 스케일)
-    "W_VEL": 0.10,              # 속도 항 가중치
-    "W_ACC": 0.02,              # 가속도 항 가중치
+    "W_VEL": 0.50,              # 속도 항 가중치
+    "W_ACC": 0.25,              # 가속도 항 가중치
     "TIME_WEIGHTS": [1.0, 0.9, 0.8, 0.7],  # 가까운 미래 가중 ↑ (길이=T)
     "MC_DIVERSITY_THR": 1e-4,
     "MC_INPUT_NOISE_STD": 5e-3,
@@ -88,7 +88,7 @@ def visualize_meta_predictions(mean_pred, std_pred, ground_truth, sample_idx=0):
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.93])
-    save_path = f"meta_prediction_sample_{sample_idx+1}_grad_version.png"
+    save_path = f"meta_prediction_sample_{sample_idx+1}_grad_versio_3.png"
     plt.savefig(save_path)
     print(f"Saved meta-prediction visualization to {save_path}")
     plt.show()
