@@ -1,4 +1,3 @@
-# meta_main.py
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -44,6 +43,10 @@ CONFIG.update({
     "W_VEL": 0.10,              # 속도 항 가중치
     "W_ACC": 0.02,              # 가속도 항 가중치
     "TIME_WEIGHTS": [1.0, 0.9, 0.8, 0.7],  # 가까운 미래 가중 ↑ (길이=T)
+    "MC_DIVERSITY_THR": 1e-4,
+    "MC_INPUT_NOISE_STD": 5e-3,
+    "MC_DIVERSITY_MAX_TRIES": 3,
+    "VAR_INFLATE_ALPHA": 0.05,
 })
 
 def visualize_meta_predictions(mean_pred, std_pred, ground_truth, sample_idx=0):
@@ -99,7 +102,6 @@ def main():
     if not all_files:
         raise FileNotFoundError(f"Error: No .npy files found in {data_dir}.")
 
-    # --- [핵심 수정] 계절적 특성을 고려한 데이터 분할 ---
     TRAIN_MONTHS = {1, 3, 4, 6, 7, 9, 10, 12}
     VAL_MONTHS = {2, 5, 8, 11}
 
@@ -120,7 +122,6 @@ def main():
                 val_files.append(p)
         elif dt.year == 2023:
             test_files.append(p)
-    # ----------------------------------------------------
 
     print(f"Total files: {len(all_files)}")
     print(f"Train files: {len(train_files)} (Years 2021-2022, Months: {sorted(list(TRAIN_MONTHS))})")
@@ -186,7 +187,7 @@ def main():
         
         test_loss, mean_pred, std_pred, ground_truth = meta_evaluate(
             meta_learner, 
-            test_task, # 이제 명확히 분리된 테스트 태스크를 사용
+            test_task,
             device, 
             CONFIG['NUM_ADAPTATION_STEPS'], 
             CONFIG['NUM_EVAL_SAMPLES']

@@ -1,4 +1,3 @@
-# meta_engine.py
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -8,47 +7,108 @@ import copy
 
 def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_clip_norm):
     """
-    [수정됨] 그래디언트 클리핑이 추가된 메타-러닝 훈련 함수.
+    한 에폭의 메타-학습을 수행하고 평균 outer loss를 반환.
+    - higher로 meta_learner.prior_net을 inner-loop 적응
+    - NaN/Inf 가드 및 gradient clipping 적용
+    - AMP(선택) 지원: CONFIG['USE_AMP']=True 시 자동 활성화
     """
+    import torch
+    import higher
+    from torch.cuda.amp import autocast, GradScaler
+
     meta_learner.train()
-    total_meta_loss = 0.0
+    cfg = meta_learner.config
 
-    for task_batch in tqdm(dataloader, desc="Meta-Training"):
-        support_x, support_y, query_x, query_y = task_batch
-        support_x, support_y = support_x.squeeze(0).to(device), support_y.squeeze(0).to(device)
-        query_x, query_y = query_x.squeeze(0).to(device), query_y.squeeze(0).to(device)
+    # 설정 키 호환 (INNER_STEPS vs NUM_ADAPTATION_STEPS)
+    inner_steps = int(cfg.get("NUM_ADAPTATION_STEPS", cfg.get("INNER_STEPS", 5)))
+    inner_lr    = float(cfg.get("INNER_LR", 1e-3))
+    use_amp     = bool(cfg.get("USE_AMP", False))
 
-        meta_optimizer.zero_grad()
-        
-        inner_opt = torch.optim.SGD(meta_learner.prior_net.parameters(), lr=meta_learner.config['INNER_LR'])
-        
-        with higher.innerloop_ctx(meta_learner.prior_net, inner_opt, copy_initial_weights=True) as (fmodel, diffopt):
-            for _ in range(meta_learner.config['INNER_STEPS']):
-                inner_loss = meta_learner.inner_loop_loss(fmodel, support_x, support_y)
-                # inner_loss에 nan이 있는지 확인 (디버깅용)
-                if torch.isnan(inner_loss):
-                    print("Warning: NaN detected in inner loop loss.")
-                    continue # 이 태스크는 건너뜀
+    scaler = GradScaler(enabled=use_amp)
+
+    running_outer = 0.0
+    n_tasks = 0
+
+    meta_optimizer.zero_grad(set_to_none=True)
+
+    for batch in tqdm(dataloader, desc="Meta-Training"):
+        if len(batch) != 4:
+            raise ValueError("Each batch must be (support_x, support_y, query_x, query_y).")
+        support_x, support_y, query_x, query_y = batch
+
+        # 디바이스 이동
+        support_x = support_x.to(device, non_blocking=True)
+        support_y = support_y.to(device, non_blocking=True)
+        query_x   = query_x.to(device, non_blocking=True)
+        query_y   = query_y.to(device, non_blocking=True)
+
+        # inner optimizer (task별 초기화)
+        base_params = list(meta_learner.prior_net.parameters())
+        inner_opt = torch.optim.SGD(base_params, lr=inner_lr, momentum=0.0)
+
+        # higher 컨텍스트: prior_net을 적응 대상으로 사용
+        with higher.innerloop_ctx(
+            meta_learner.prior_net,
+            inner_opt,
+            copy_initial_weights=True,     # 태스크마다 깨끗한 초기 파라미터
+            track_higher_grads=True        # 메타 업데이트 위해 고계 미분 추적
+        ) as (fmodel, diffopt):
+
+            # ---------- Inner loop (support) ----------
+            for _ in range(inner_steps):
+                with autocast(enabled=use_amp):
+                    inner_loss = meta_learner.inner_loop_loss(fmodel, support_x, support_y)
+                    inner_loss = torch.nan_to_num(inner_loss, nan=0.0, posinf=1e6, neginf=1e6)
+
+                # higher는 diffopt.step(loss) 내부에서 backward를 수행
                 diffopt.step(inner_loss)
 
-            outer_loss = meta_learner.outer_loop_loss(fmodel, query_x, query_y)
-            if torch.isnan(outer_loss):
-                print("Warning: NaN detected in outer loop loss.")
-                continue # 이 태스크는 건너뜀
-            
-            outer_loss.backward()
+                # (선택) fmodel 파라미터 grad 안전화 + 클립
+                for p in fmodel.parameters():
+                    if p.grad is not None:
+                        p.grad.data = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
+                if grad_clip_norm is not None and grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(fmodel.parameters(), max_norm=grad_clip_norm)
 
-        # --- 안정화 장치: 그래디언트 클리핑 ---
-        torch.nn.utils.clip_grad_norm_(meta_learner.parameters(), grad_clip_norm)
-        
-        meta_optimizer.step()
-        total_meta_loss += outer_loss.item()
+            # ---------- Outer loss (query) ----------
+            with autocast(enabled=use_amp):
+                outer_loss = meta_learner.outer_loop_loss(fmodel, query_x, query_y)
+                outer_loss = torch.nan_to_num(outer_loss, nan=0.0, posinf=1e6, neginf=1e6)
 
-    return total_meta_loss / len(dataloader)
+            # 메타 그라드 누적 (원본 prior_net 파라미터로)
+            if use_amp:
+                scaler.scale(outer_loss).backward()
+            else:
+                outer_loss.backward()
+
+            running_outer += float(outer_loss.detach().cpu())
+            n_tasks += 1
+
+        # ---------- Meta step (task마다 업데이트) ----------
+        # 메타 그라드 가드 + 클립
+        for p in meta_learner.prior_net.parameters():
+            if p.grad is not None:
+                p.grad.data = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if grad_clip_norm is not None and grad_clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(meta_learner.prior_net.parameters(), max_norm=grad_clip_norm)
+
+        if use_amp:
+            scaler.step(meta_optimizer)
+            scaler.update()
+        else:
+            meta_optimizer.step()
+
+        meta_optimizer.zero_grad(set_to_none=True)
+
+    avg_outer = running_outer / max(1, n_tasks)
+    return avg_outer
+
+
 
 def meta_evaluate(meta_learner, test_task, device, num_adaptation_steps, num_eval_samples, debug=False):
     """
-    [수정됨] nan 추적을 위한 디버깅 기능이 추가된 평가 함수.
+    평가 함수: 현재는 MSE 기반(원 레포 스타일 유지).
     """
     meta_learner.eval()
     
@@ -61,56 +121,27 @@ def meta_evaluate(meta_learner, test_task, device, num_adaptation_steps, num_eva
     
     inner_opt = torch.optim.SGD(fmodel.parameters(), lr=meta_learner.config['INNER_LR'])
     
-    if debug:
-        print("\n--- Starting Debugging in meta_evaluate ---")
-
     for step in range(num_adaptation_steps):
         inner_opt.zero_grad()
-        
-        # inner_loop_loss를 구성하는 각 요소를 따로 계산하여 추적
-        fmodel.prior_net.train() # BN, Dropout 등을 훈련 모드로 설정
+        fmodel.prior_net.train()
         outputs = fmodel.prior_net(support_x, sample=True)
         mse_loss = F.mse_loss(outputs, support_y)
         kl_loss = fmodel.prior_net.kl_divergence(meta_learner.prior_net)
         inner_loss = mse_loss + meta_learner.config['KL_WEIGHT'] * kl_loss
 
-        if debug:
-            print(f"  [Adaptation Step {step+1}/{num_adaptation_steps}]")
-            print(f"    MSE Loss: {mse_loss.item():.6f}")
-            print(f"    KL Loss: {kl_loss.item():.6f}")
-            print(f"    Total Inner Loss: {inner_loss.item():.6f}")
-
         if torch.isnan(inner_loss) or torch.isinf(inner_loss):
             print(f"!!! NaN or Inf detected at adaptation step {step+1}. Stopping evaluation. !!!")
-            if debug:
-                # 파라미터 값 확인
-                for name, param in fmodel.named_parameters():
-                    if torch.isnan(param).any() or torch.isinf(param).any():
-                        print(f"    - NaN/Inf found in parameter: {name}")
             return float('nan'), None, None, None
             
         inner_loss.backward()
-
-        # 그래디언트 크기 확인
-        if debug:
-            total_norm = 0
-            for p in fmodel.parameters():
-                if p.grad is not None:
-                    param_norm = p.grad.data.norm(2)
-                    total_norm += param_norm.item() ** 2
-            total_norm = total_norm ** 0.5
-            print(f"    Gradient Norm: {total_norm:.6f}")
-
         inner_opt.step()
         
-    # 평가 시에는 eval 모드로 전환
     fmodel.eval()
     with torch.no_grad():
         predictions = []
         for _ in range(num_eval_samples):
             pred = fmodel.prior_net(query_x, sample=True)
             pred = torch.nan_to_num(pred, nan=0.0, posinf=1e3, neginf=-1e3)
-
             predictions.append(pred.cpu())
         
         predictions_tensor = torch.stack(predictions)
