@@ -11,10 +11,25 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
     - higher로 meta_learner.prior_net을 inner-loop 적응
     - NaN/Inf 가드 및 gradient clipping 적용
     - AMP(선택) 지원: CONFIG['USE_AMP']=True 시 자동 활성화
+    - 🔧 입력 형태 [1, K, C, H, W] -> [B=K, C, H, W]로 평탄화 처리
     """
     import torch
     import higher
-    from torch.cuda.amp import autocast, GradScaler
+    from torch.amp import autocast, GradScaler  # 최신 권장 API
+
+    def _flatten_task_batch(x, is_target=False):
+        """
+        x: [1, K, C, H, W] -> [K, C, H, W]
+        (로더 batch_size=1 전제. 만약 [K, C, H, W]면 그대로 통과)
+        """
+        if x.dim() == 5:
+            b, k, c, h, w = x.shape
+            assert b == 1, f"Expected loader batch=1, got {b}"
+            return x.view(k, c, h, w)
+        elif x.dim() == 4:
+            return x
+        else:
+            raise RuntimeError(f"Unexpected tensor shape {tuple(x.shape)} for {'target' if is_target else 'input'}")
 
     meta_learner.train()
     cfg = meta_learner.config
@@ -24,7 +39,7 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
     inner_lr    = float(cfg.get("INNER_LR", 1e-3))
     use_amp     = bool(cfg.get("USE_AMP", False))
 
-    scaler = GradScaler(enabled=use_amp)
+    scaler = GradScaler('cuda', enabled=use_amp)
 
     running_outer = 0.0
     n_tasks = 0
@@ -42,6 +57,12 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
         query_x   = query_x.to(device, non_blocking=True)
         query_y   = query_y.to(device, non_blocking=True)
 
+        # 🔧 [1, K, C, H, W] -> [K, C, H, W] 평탄화
+        support_x = _flatten_task_batch(support_x, is_target=False).contiguous()
+        support_y = _flatten_task_batch(support_y, is_target=True).contiguous()
+        query_x   = _flatten_task_batch(query_x,   is_target=False).contiguous()
+        query_y   = _flatten_task_batch(query_y,   is_target=True).contiguous()
+
         # inner optimizer (task별 초기화)
         base_params = list(meta_learner.prior_net.parameters())
         inner_opt = torch.optim.SGD(base_params, lr=inner_lr, momentum=0.0)
@@ -56,22 +77,15 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
 
             # ---------- Inner loop (support) ----------
             for _ in range(inner_steps):
-                with autocast(enabled=use_amp):
+                with autocast('cuda', enabled=use_amp):
                     inner_loss = meta_learner.inner_loop_loss(fmodel, support_x, support_y)
                     inner_loss = torch.nan_to_num(inner_loss, nan=0.0, posinf=1e6, neginf=1e6)
 
-                # higher는 diffopt.step(loss) 내부에서 backward를 수행
+                # higher가 내부에서 backward+update 처리. inner에서는 .grad를 건드리지 않음
                 diffopt.step(inner_loss)
 
-                # (선택) fmodel 파라미터 grad 안전화 + 클립
-                for p in fmodel.parameters():
-                    if p.grad is not None:
-                        p.grad.data = torch.nan_to_num(p.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
-                if grad_clip_norm is not None and grad_clip_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(fmodel.parameters(), max_norm=grad_clip_norm)
-
             # ---------- Outer loss (query) ----------
-            with autocast(enabled=use_amp):
+            with autocast('cuda', enabled=use_amp):
                 outer_loss = meta_learner.outer_loop_loss(fmodel, query_x, query_y)
                 outer_loss = torch.nan_to_num(outer_loss, nan=0.0, posinf=1e6, neginf=1e6)
 
@@ -103,6 +117,7 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
 
     avg_outer = running_outer / max(1, n_tasks)
     return avg_outer
+
 
 
 

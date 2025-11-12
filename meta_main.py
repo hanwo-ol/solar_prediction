@@ -8,7 +8,8 @@ from torchvision import transforms
 import math
 
 # 모듈 임포트
-from meta_model import MetaLearner
+#from meta_model import MetaLearner
+from meta_model_grad import MetaLearner
 from meta_dataset import SolarPredictionDataset, MetaSolarPredictionDataset, _extract_time_from_path
 from meta_engine import meta_train_one_epoch, meta_evaluate
 from utils import set_seed, get_device
@@ -16,7 +17,7 @@ from utils import set_seed, get_device
 # --- 1. 설정 (Configuration) ---
 CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy",
-    "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split.pth",
+    "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split_grad.pth",
     "SEED": 42,
     "EPOCHS": 50,
     "META_LR": 1e-5,
@@ -87,7 +88,7 @@ def visualize_meta_predictions(mean_pred, std_pred, ground_truth, sample_idx=0):
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.93])
-    save_path = f"meta_prediction_sample_{sample_idx+1}.png"
+    save_path = f"meta_prediction_sample_{sample_idx+1}_grad_version.png"
     plt.savefig(save_path)
     print(f"Saved meta-prediction visualization to {save_path}")
     plt.show()

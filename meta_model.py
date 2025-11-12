@@ -13,6 +13,9 @@ from loss_mc_dynamics import (
 # 1. 베이지안 신경망을 위한 기본 레이어 정의
 # -----------------------------------------------------------------------------
 
+def _collect_bayesian_layers(model):
+    return [m for m in model.modules() if isinstance(m, BayesianLayer)]
+
 class BayesianLayer(nn.Module):
     """
     모든 베이지안 레이어의 부모 클래스.
@@ -142,25 +145,51 @@ class BayesianConvTranspose2d(BayesianLayer):
 # -----------------------------------------------------------------------------
 
 class BayesianDoubleConv(nn.Module):
-    """(Bayesian convolution => [BN] => ReLU) * 2"""
-    def __init__(self, in_channels, out_channels, mid_channels=None):
+    """
+    (Bayesian conv => [Norm] => ReLU) * 2
+    norm: 'group' (default) | 'instance' | 'batch'
+    groups: GroupNorm용 그룹 수 (None이면 채널 수에 맞춰 자동 결정)
+    """
+    def __init__(self, in_channels, out_channels, mid_channels=None, norm: str = 'group', groups: int | None = None):
         super().__init__()
         if not mid_channels:
             mid_channels = out_channels
+
         self.conv1 = BayesianConv2d(in_channels, mid_channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(mid_channels)
         self.conv2 = BayesianConv2d(mid_channels, out_channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x, sample=True):
+        # --- Norm 선택 (GroupNorm 권장) ---
+        def _gn_groups(C: int) -> int:
+            # 채널 수에 따라 자동 그룹 수 산정 (너무 작으면 1로 = LayerNorm 유사)
+            if groups is not None:
+                return max(1, min(groups, C))
+            g = max(1, C // 8)       # 채널 8개당 1그룹 정도
+            return min(32, g)        # 과도한 그룹 방지
+
+        def _make_norm(kind: str, C: int):
+            kind = kind.lower()
+            if kind == 'group':
+                return nn.GroupNorm(_gn_groups(C), C)
+            elif kind == 'instance':
+                return nn.InstanceNorm2d(C, affine=True, track_running_stats=False)
+            elif kind == 'batch':
+                return nn.BatchNorm2d(C)
+            else:
+                raise ValueError(f"Unsupported norm type: {kind}")
+
+        self.n1 = _make_norm(norm, mid_channels)
+        self.n2 = _make_norm(norm, out_channels)
+
+    def forward(self, x, sample: bool = True):
         x = self.conv1(x, sample)
-        x = self.bn1(x)
+        x = self.n1(x)
         x = self.relu(x)
         x = self.conv2(x, sample)
-        x = self.bn2(x)
+        x = self.n2(x)
         x = self.relu(x)
         return x
+
 
 class BayesianDown(nn.Module):
     """Downscaling with maxpool then Bayesian double conv"""
@@ -240,9 +269,11 @@ class BayesianUNet(nn.Module):
     def kl_divergence(self, prior_model):
         """모델 전체의 모든 베이지안 레이어에 대한 KL Divergence의 총합을 계산합니다."""
         kl_total = 0.0
-        for module, prior_module in zip(self.modules(), prior_model.modules()):
-            if isinstance(module, BayesianLayer):
-                kl_total += module.kl_divergence(prior_module)
+        my_layers    = _collect_bayesian_layers(self)
+        prior_layers = _collect_bayesian_layers(prior_model)
+        assert len(my_layers) == len(prior_layers), "Bayesian layer count mismatch!"
+        for m, p in zip(my_layers, prior_layers):
+            kl_total += m.kl_divergence(p)
         return kl_total
 
 # -----------------------------------------------------------------------------
