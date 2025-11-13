@@ -9,15 +9,18 @@ import math
 
 # 모듈 임포트
 #from meta_model import MetaLearner
-from meta_model_grad import MetaLearner
+#from meta_model_grad import MetaLearner
+#from meta_model_grad_a import MetaLearner
+from meta_model_grad_b import MetaLearner
 from meta_dataset import SolarPredictionDataset, MetaSolarPredictionDataset, _extract_time_from_path
 from meta_engine import meta_train_one_epoch, meta_evaluate
+#from meta_engine_amp import meta_train_one_epoch, meta_evaluate
 from utils import set_seed, get_device
 
 # --- 1. 설정 (Configuration) ---
 CONFIG = {
     "DATA_DIR": "/home/user/hanwool/new_npy",
-    "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split_grad_vel50_acc_25_eps10.pth",
+    "MODEL_SAVE_PATH": "./best_bayesian_meta_model_seasonal_split_grad_vel50_acc_25_a.pth",
     "SEED": 42,
     "EPOCHS": 10,
     "META_LR": 1e-5,
@@ -27,8 +30,8 @@ CONFIG = {
     "KL_WEIGHT_MAX": 1e-6,
     "GRAD_CLIP_NORM": 5.0,
     "TASKS_PER_EPOCH": 10,
-    "K_SHOT": 3,
-    "K_QUERY": 6,
+    "K_SHOT": 2,
+    "K_QUERY": 4,
     "NUM_ADAPTATION_STEPS": 5,
     "NUM_EVAL_SAMPLES": 3,
     "INPUT_LEN": 4,
@@ -49,6 +52,8 @@ CONFIG.update({
     "MC_DIVERSITY_MAX_TRIES": 3,
     "VAR_INFLATE_ALPHA": 0.05,
 })
+
+
 
 def visualize_meta_predictions(mean_pred, std_pred, ground_truth, sample_idx=0):
     """메타-러닝 평가 결과를 시각화하는 함수."""
