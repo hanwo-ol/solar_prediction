@@ -126,11 +126,6 @@ def data_term_mc_dynamics(fmodel, x, y, config):
 
     # (3) NLL + dynamics
     nll  = _heteroscedastic_nll_from_mu_var(mean_pred, var, y, time_weights=time_weights)
-    with torch.no_grad():
-        resid = (y - mean_pred)
-        print(f"[dbg] mean|resid|: {resid.abs().mean().item():.4f}, "
-              f"mean var: {var.mean().item():.6f}, "
-              f"log var mean: {torch.log(var).mean().item():.4f}")
     lvel = _velocity_loss(mean_pred, y, reduction="mean")
     lacc = _accel_loss(mean_pred, y, reduction="mean")
 
