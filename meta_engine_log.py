@@ -9,31 +9,31 @@ from torch.amp import autocast, GradScaler
 def _flatten_task_batch(x, is_target=False):
     if x.dim() == 5:
         b, k, c, h, w = x.shape
-        assert b == 1, f\"Expected loader batch=1, got {b}\"
+        assert b == 1, f"Expected loader batch=1, got {b}"
         return x.view(k, c, h, w)
     elif x.dim() == 4:
         return x
     else:
-        raise RuntimeError(f\"Unexpected tensor shape {tuple(x.shape)} for {'target' if is_target else 'input'}\")
+        raise RuntimeError(f"Unexpected tensor shape {tuple(x.shape)} for {'target' if is_target else 'input'}")
 
 def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_clip_norm):
-    \"\"\"Meta-train one epoch. Returns (avg_outer_loss, avg_metrics). avg_metrics computed on query set.\"\"\"
+    """Meta-train one epoch. Returns (avg_outer_loss, avg_metrics). avg_metrics computed on query set."""
     meta_learner.train()
     cfg = meta_learner.config
-    inner_steps = int(cfg.get(\"NUM_ADAPTATION_STEPS\", cfg.get(\"INNER_STEPS\", 5)))
-    inner_lr    = float(cfg.get(\"INNER_LR\", 1e-3))
-    use_amp     = bool(cfg.get(\"USE_AMP\", False))
+    inner_steps = int(cfg.get("NUM_ADAPTATION_STEPS", cfg.get("INNER_STEPS", 5)))
+    inner_lr    = float(cfg.get("INNER_LR", 1e-3))
+    use_amp     = bool(cfg.get("USE_AMP", False))
     scaler = GradScaler('cuda', enabled=use_amp)
 
     running_outer = 0.0
-    running_metrics = {\"mse\":0.0, \"mae\":0.0, \"ssim\":0.0}
+    running_metrics = {"mse":0.0, "mae":0.0, "ssim":0.0}
     n_tasks = 0
 
     meta_optimizer.zero_grad(set_to_none=True)
 
-    for batch in tqdm(dataloader, desc=\"Meta-Training\"):
+    for batch in tqdm(dataloader, desc="Meta-Training"):
         if len(batch) != 4:
-            raise ValueError(\"Each batch must be (support_x, support_y, query_x, query_y).\" )
+            raise ValueError("Each batch must be (support_x, support_y, query_x, query_y)." )
         support_x, support_y, query_x, query_y = batch
 
         support_x = support_x.to(device, non_blocking=True)
@@ -72,7 +72,7 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
             n_tasks += 1
 
             with torch.no_grad():
-                S = int(meta_learner.config.get(\"MC_OUTER_SAMPLES\", meta_learner.config.get(\"MC_INNER_SAMPLES\", 4)))
+                S = int(meta_learner.config.get("MC_OUTER_SAMPLES", meta_learner.config.get("MC_INNER_SAMPLES", 4)))
                 preds = []
                 for _ in range(S):
                     p = fmodel.prior_net(query_x, sample=True)
@@ -80,7 +80,7 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
                     preds.append(p)
                 mean_pred = torch.stack(preds,0).mean(0)
                 from utils import compute_metrics
-                data_range = (meta_learner.config.get(\"DATA_MAX\", 1.0) - meta_learner.config.get(\"DATA_MIN\", 0.0)) or 1.0
+                data_range = (meta_learner.config.get("DATA_MAX", 1.0) - meta_learner.config.get("DATA_MIN", 0.0)) or 1.0
                 mt = compute_metrics(mean_pred, query_y, data_range=data_range)
                 for k in running_metrics: running_metrics[k] += mt[k]
 
@@ -100,7 +100,7 @@ def meta_train_one_epoch(meta_learner, dataloader, meta_optimizer, device, grad_
 
 @torch.no_grad()
 def meta_evaluate(meta_learner, task, device, num_adaptation_steps, num_eval_samples):
-    \"\"\"Returns: (test_loss, mean_pred, std_pred, query_y, metrics).\"\"\"
+    """Returns: (test_loss, mean_pred, std_pred, query_y, metrics)."""
     meta_learner.eval()
     support_x, support_y, query_x, query_y = task
 
@@ -114,9 +114,9 @@ def meta_evaluate(meta_learner, task, device, num_adaptation_steps, num_eval_sam
     query_x   = _flatten_task_batch(query_x,   is_target=False).contiguous()
     query_y   = _flatten_task_batch(query_y,   is_target=True).contiguous()
 
-    inner_lr = float(meta_learner.config.get(\"INNER_LR\", 1e-3))
+    inner_lr = float(meta_learner.config.get("INNER_LR", 1e-3))
     inner_opt = torch.optim.SGD(meta_learner.prior_net.parameters(), lr=inner_lr)
-    use_amp = bool(meta_learner.config.get(\"USE_AMP\", False))
+    use_amp = bool(meta_learner.config.get("USE_AMP", False))
 
     with higher.innerloop_ctx(
         meta_learner.prior_net, inner_opt,
@@ -140,6 +140,6 @@ def meta_evaluate(meta_learner, task, device, num_adaptation_steps, num_eval_sam
     test_loss = F.mse_loss(mean_prediction, query_y.cpu())
 
     from utils import compute_metrics
-    data_range = (meta_learner.config.get(\"DATA_MAX\", 1.0) - meta_learner.config.get(\"DATA_MIN\", 0.0)) or 1.0
+    data_range = (meta_learner.config.get("DATA_MAX", 1.0) - meta_learner.config.get("DATA_MIN", 0.0)) or 1.0
     metrics = compute_metrics(mean_prediction, query_y.cpu(), data_range=data_range)
     return test_loss.item(), mean_prediction, std_prediction, query_y.cpu(), metrics

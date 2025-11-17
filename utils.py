@@ -47,10 +47,10 @@ def _gaussian_window(ch, win_size=11, sigma=1.5, device='cpu', dtype=torch.float
 
 @torch.no_grad()
 def ssim_tchw(x, y, data_range=1.0, win_size=11, K1=0.01, K2=0.03):
-    \"\"\"
+    """
     x,y: [B,T,H,W] float
     returns: scalar mean SSIM
-    \"\"\"
+    """
     import torch
     assert x.shape == y.shape and x.dim()==4
     B,T,H,W = x.shape
@@ -84,24 +84,24 @@ def compute_metrics(y_pred_mean, y_true, data_range=1.0):
     mse = F.mse_loss(y_pred_mean, y_true).item()
     mae = F.l1_loss(y_pred_mean, y_true).item()
     ssim = ssim_tchw(y_pred_mean, y_true, data_range=float(data_range))
-    return {\"mse\": mse, \"mae\": mae, \"ssim\": ssim}
+    return {"mse": mse, "mae": mae, "ssim": ssim}
 
-def start_run_log(base_dir=\"log\", config_dict=None):
-    ts = __import__('time').strftime(\"%Y%m%d-%H%M%S\")
+def start_run_log(base_dir="log", config_dict=None):
+    ts = __import__('time').strftime("%Y%m%d-%H%M%S")
     run_dir = _Path(base_dir)/ts
     run_dir.mkdir(parents=True, exist_ok=True)
     if config_dict is not None:
-        (run_dir/\"config.json\").write_text(__import__('json').dumps(config_dict, indent=2), encoding=\"utf-8\")
+        (run_dir/"config.json").write_text(__import__('json').dumps(config_dict, indent=2), encoding="utf-8")
     return str(run_dir)
 
 class RunLogger:
     def __init__(self, run_dir: str):
         self.run_dir = _Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        self.csv_path = self.run_dir / \"metrics.csv\"
+        self.csv_path = self.run_dir / "metrics.csv"
         if not self.csv_path.exists():
-            self.csv_path.write_text(\"epoch,split,loss,mse,mae,ssim,kl_weight,notes\n\", encoding=\"utf-8\")
+            self.csv_path.write_text("epoch,split,loss,mse,mae,ssim,kl_weight,notes\n", encoding="utf-8")
 
-    def log_row(self, epoch, split, loss, metrics: dict, kl_weight=None, notes=\"\"):
-        with self.csv_path.open(\"a\", newline=\"\") as f:
-            f.write(f\"{epoch},{split},{'' if loss is None else f'{loss:.6f}'},{metrics.get('mse','')},{metrics.get('mae','')},{metrics.get('ssim','')},{'' if kl_weight is None else f'{kl_weight:.6e}'},{notes}\\n\")
+    def log_row(self, epoch, split, loss, metrics: dict, kl_weight=None, notes=""):
+        with self.csv_path.open("a", newline="") as f:
+            f.write(f"{epoch},{split},{'' if loss is None else f'{loss:.6f}'},{metrics.get('mse','')},{metrics.get('mae','')},{metrics.get('ssim','')},{'' if kl_weight is None else f'{kl_weight:.6e}'},{notes}\\n")
